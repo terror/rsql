@@ -64,7 +64,7 @@ jobs:
         run: cargo build
 
       - name: Lockfile
-        run: cargo update --locked --package {package}
+        run: cargo update --locked --package sql-rs
 
       - name: Lint
         run: cargo clippy --all-targets --all-features

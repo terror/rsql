@@ -1,8 +1,12 @@
-use prettytable::{format, Cell, Row, Table as PrettyTable};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::collections::BTreeMap;
-use std::fmt::{self, Formatter};
-use thiserror::Error;
+use {
+  prettytable::{format, Cell, Row, Table as PrettyTable},
+  serde::{de::DeserializeOwned, Deserialize, Serialize},
+  std::{
+    collections::BTreeMap,
+    fmt::{self, Formatter},
+  },
+  thiserror::Error,
+};
 
 #[derive(Error, Debug)]
 pub enum DatabaseError {
@@ -182,14 +186,14 @@ mod tests {
   use super::*;
 
   #[test]
-  fn test_create_table() {
+  fn create_table() {
     let mut db = Database::<Book>::new();
     assert!(db.create_table("books").is_ok());
     assert!(db.create_table("books").is_err());
   }
 
   #[test]
-  fn test_insert_into() {
+  fn insert_into() {
     let mut db = Database::<Book>::new();
 
     db.create_table("books").unwrap();
@@ -213,7 +217,7 @@ mod tests {
   }
 
   #[test]
-  fn test_insert_into_nonexistent_table() {
+  fn insert_into_nonexistent_table() {
     let mut db = Database::<Book>::new();
 
     let err = db.insert_into(
@@ -229,7 +233,7 @@ mod tests {
   }
 
   #[test]
-  fn test_get_table() {
+  fn get_table() {
     let mut db = Database::<Book>::new();
 
     db.create_table("books").unwrap();
