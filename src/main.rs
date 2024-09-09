@@ -1,6 +1,7 @@
 use prettytable::{format, Cell, Row, Table as PrettyTable};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fmt::{self, Formatter};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -17,9 +18,43 @@ struct Table<T: Serialize + DeserializeOwned> {
   rows: Vec<T>,
 }
 
+impl<T: Serialize + DeserializeOwned + PrettyPrintable> fmt::Display
+  for Table<T>
+{
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let mut pretty_table = PrettyTable::new();
+
+    pretty_table.set_format(*format::consts::FORMAT_BOX_CHARS);
+
+    pretty_table.add_row(T::header());
+
+    for row in &self.rows {
+      pretty_table.add_row(row.to_row());
+    }
+
+    write!(f, "{}", pretty_table)
+  }
+}
+
 #[derive(Debug, PartialEq)]
 struct Database<T: Serialize + DeserializeOwned> {
   tables: BTreeMap<String, Table<T>>,
+}
+
+impl<T: Serialize + DeserializeOwned + PrettyPrintable> fmt::Display
+  for Database<T>
+{
+  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    let mut output = String::new();
+
+    for (table_name, table) in &self.tables {
+      output.push_str(&format!("Table: {}\n", table_name));
+      output.push_str(&table.to_string());
+      output.push_str("\n\n");
+    }
+
+    write!(f, "{}", output.trim_end())
+  }
 }
 
 impl<T: Serialize + DeserializeOwned> Database<T> {
@@ -45,6 +80,13 @@ impl<T: Serialize + DeserializeOwned> Database<T> {
     Ok(())
   }
 
+  fn from(&self, table_name: &str) -> Result<&Table<T>, DatabaseError> {
+    self
+      .tables
+      .get(table_name)
+      .ok_or_else(|| DatabaseError::TableNotFound(table_name.to_string()))
+  }
+
   fn insert_into(
     &mut self,
     table_name: &str,
@@ -59,30 +101,11 @@ impl<T: Serialize + DeserializeOwned> Database<T> {
     }
   }
 
-  fn get_table(&self, table_name: &str) -> Result<&Table<T>, DatabaseError> {
-    self
-      .tables
-      .get(table_name)
-      .ok_or_else(|| DatabaseError::TableNotFound(table_name.to_string()))
-  }
-
-  fn pretty_print_table(&self, table_name: &str) -> Result<(), DatabaseError>
+  fn print(&self, table_name: &str) -> Result<(), DatabaseError>
   where
     T: PrettyPrintable,
   {
-    let table = self.get_table(table_name)?;
-
-    let mut pretty_table = PrettyTable::new();
-    pretty_table.set_format(*format::consts::FORMAT_BOX_CHARS);
-
-    pretty_table.add_row(T::header());
-
-    for row in &table.rows {
-      pretty_table.add_row(row.to_row());
-    }
-
-    pretty_table.printstd();
-
+    print!("{}", self.from(table_name)?);
     Ok(())
   }
 }
@@ -149,7 +172,7 @@ fn main() -> Result<(), DatabaseError> {
     },
   )?;
 
-  database.pretty_print_table("books")?;
+  database.print("books")?;
 
   Ok(())
 }
@@ -182,7 +205,7 @@ mod tests {
       )
       .is_ok());
 
-    let table = db.get_table("books").unwrap();
+    let table = db.from("books").unwrap();
 
     assert_eq!(table.rows.len(), 1);
 
@@ -221,7 +244,7 @@ mod tests {
     )
     .unwrap();
 
-    let table = db.get_table("books").unwrap();
+    let table = db.from("books").unwrap();
 
     assert_eq!(table.name, "books");
 
@@ -230,7 +253,7 @@ mod tests {
     assert_eq!(table.rows[0].name, "Test Book");
 
     assert!(matches!(
-      db.get_table("nonexistent"),
+      db.from("nonexistent"),
       Err(DatabaseError::TableNotFound(_))
     ));
   }
