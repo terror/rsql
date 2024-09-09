@@ -1,3 +1,4 @@
+use prettytable::{format, Cell, Row, Table as PrettyTable};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::BTreeMap;
 use thiserror::Error;
@@ -58,46 +59,97 @@ impl<T: Serialize + DeserializeOwned> Database<T> {
     }
   }
 
-  #[cfg(test)]
   fn get_table(&self, table_name: &str) -> Result<&Table<T>, DatabaseError> {
     self
       .tables
       .get(table_name)
       .ok_or_else(|| DatabaseError::TableNotFound(table_name.to_string()))
   }
+
+  fn pretty_print_table(&self, table_name: &str) -> Result<(), DatabaseError>
+  where
+    T: PrettyPrintable,
+  {
+    let table = self.get_table(table_name)?;
+
+    let mut pretty_table = PrettyTable::new();
+    pretty_table.set_format(*format::consts::FORMAT_BOX_CHARS);
+
+    pretty_table.add_row(T::header());
+
+    for row in &table.rows {
+      pretty_table.add_row(row.to_row());
+    }
+
+    pretty_table.printstd();
+
+    Ok(())
+  }
+}
+
+trait PrettyPrintable {
+  fn header() -> Row;
+  fn to_row(&self) -> Row;
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
-struct Person {
+struct Book {
+  id: u32,
   name: String,
-  age: u8,
-  department_id: u8,
+  author_id: u32,
+}
+
+impl PrettyPrintable for Book {
+  fn header() -> Row {
+    Row::new(vec![
+      Cell::new("id"),
+      Cell::new("name"),
+      Cell::new("author_id"),
+    ])
+  }
+
+  fn to_row(&self) -> Row {
+    Row::new(vec![
+      Cell::new(&self.id.to_string()),
+      Cell::new(&self.name),
+      Cell::new(&self.author_id.to_string()),
+    ])
+  }
 }
 
 fn main() -> Result<(), DatabaseError> {
-  let mut database = Database::<Person>::new();
+  let mut database = Database::<Book>::new();
 
-  database.create_table("people")?;
+  database.create_table("books")?;
 
   database.insert_into(
-    "people",
-    Person {
-      name: "Alice Smith".to_string(),
-      age: 30,
-      department_id: 1,
+    "books",
+    Book {
+      id: 1,
+      name: "The Elliptical Machine that ate Manhattan".to_string(),
+      author_id: 1,
     },
   )?;
 
   database.insert_into(
-    "people",
-    Person {
-      name: "Bob Johnson".to_string(),
-      age: 25,
-      department_id: 2,
+    "books",
+    Book {
+      id: 2,
+      name: "Queen of the Bats".to_string(),
+      author_id: 2,
     },
   )?;
 
-  println!("{:#?}", database);
+  database.insert_into(
+    "books",
+    Book {
+      id: 3,
+      name: "ChocoMan".to_string(),
+      author_id: 3,
+    },
+  )?;
+
+  database.pretty_print_table("books")?;
 
   Ok(())
 }
@@ -107,76 +159,75 @@ mod tests {
   use super::*;
 
   #[test]
-  fn create_table() {
-    let mut db = Database::<Person>::new();
-    assert!(db.create_table("employees").is_ok());
-    assert!(db.create_table("employees").is_err());
+  fn test_create_table() {
+    let mut db = Database::<Book>::new();
+    assert!(db.create_table("books").is_ok());
+    assert!(db.create_table("books").is_err());
   }
 
   #[test]
-  fn insert_into() {
-    let mut db = Database::<Person>::new();
+  fn test_insert_into() {
+    let mut db = Database::<Book>::new();
 
-    db.create_table("employees").unwrap();
+    db.create_table("books").unwrap();
 
     assert!(db
       .insert_into(
-        "employees",
-        Person {
-          name: "John Doe".to_string(),
-          age: 30,
-          department_id: 1,
+        "books",
+        Book {
+          id: 1,
+          name: "Test Book".to_string(),
+          author_id: 1,
         }
       )
       .is_ok());
 
-    let table = db.get_table("employees").unwrap();
+    let table = db.get_table("books").unwrap();
 
     assert_eq!(table.rows.len(), 1);
 
-    assert_eq!(table.rows[0].name, "John Doe");
+    assert_eq!(table.rows[0].name, "Test Book");
   }
 
   #[test]
-  fn insert_into_nonexistent_table() {
-    let mut db = Database::<Person>::new();
+  fn test_insert_into_nonexistent_table() {
+    let mut db = Database::<Book>::new();
 
-    assert!(matches!(
-      db.insert_into(
-        "nonexistent",
-        Person {
-          name: "Jane Doe".to_string(),
-          age: 25,
-          department_id: 2,
-        }
-      ),
-      Err(DatabaseError::TableNotFound(_))
-    ));
+    let err = db.insert_into(
+      "nonexistent",
+      Book {
+        id: 1,
+        name: "Test Book".to_string(),
+        author_id: 1,
+      },
+    );
+
+    assert!(matches!(err, Err(DatabaseError::TableNotFound(_))));
   }
 
   #[test]
-  fn get_table() {
-    let mut db = Database::<Person>::new();
+  fn test_get_table() {
+    let mut db = Database::<Book>::new();
 
-    db.create_table("employees").unwrap();
+    db.create_table("books").unwrap();
 
     db.insert_into(
-      "employees",
-      Person {
-        name: "Alice".to_string(),
-        age: 28,
-        department_id: 3,
+      "books",
+      Book {
+        id: 1,
+        name: "Test Book".to_string(),
+        author_id: 1,
       },
     )
     .unwrap();
 
-    let table = db.get_table("employees").unwrap();
+    let table = db.get_table("books").unwrap();
 
-    assert_eq!(table.name, "employees");
+    assert_eq!(table.name, "books");
 
     assert_eq!(table.rows.len(), 1);
 
-    assert_eq!(table.rows[0].name, "Alice");
+    assert_eq!(table.rows[0].name, "Test Book");
 
     assert!(matches!(
       db.get_table("nonexistent"),
