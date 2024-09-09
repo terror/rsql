@@ -1,23 +1,23 @@
 use {
-  prettytable::{format, row, Row, Table as PrettyTable},
+  prettytable::{format, row, Row as PrettyRow, Table as PrettyTable},
   std::{any::Any, collections::BTreeMap, fmt, marker::PhantomData},
   thiserror::Error,
 };
 
-pub trait TableRow: fmt::Debug + Any {
+pub trait Row: fmt::Debug + Any {
   fn as_any(&self) -> &dyn Any;
-  fn header() -> Row;
-  fn to_pretty_row(&self) -> Row;
+  fn header() -> PrettyRow;
+  fn to_pretty_row(&self) -> PrettyRow;
 }
 
-struct Table<T: TableRow> {
+struct Table<T: Row> {
   #[allow(dead_code)]
   name: String,
   rows: Vec<T>,
   phantom: PhantomData<fn() -> T>,
 }
 
-impl<T: TableRow> Table<T> {
+impl<T: Row> Table<T> {
   fn new(name: String) -> Self {
     Self {
       name,
@@ -27,7 +27,7 @@ impl<T: TableRow> Table<T> {
   }
 }
 
-impl<T: TableRow> fmt::Display for Table<T> {
+impl<T: Row> fmt::Display for Table<T> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let mut pretty_table = PrettyTable::new();
 
@@ -64,7 +64,7 @@ impl Database {
     }
   }
 
-  fn create_table<T: TableRow + 'static>(
+  fn create_table<T: Row + 'static>(
     &mut self,
     name: &str,
   ) -> Result<(), DatabaseError> {
@@ -80,7 +80,7 @@ impl Database {
   }
 
   #[cfg(test)]
-  fn from<T: TableRow + 'static>(
+  fn from<T: Row + 'static>(
     &self,
     table_name: &str,
   ) -> Result<&Table<T>, DatabaseError> {
@@ -92,7 +92,7 @@ impl Database {
     }
   }
 
-  fn insert_into<T: TableRow + 'static>(
+  fn insert_into<T: Row + 'static>(
     &mut self,
     table_name: &str,
     row: T,
@@ -111,7 +111,7 @@ impl Database {
     }
   }
 
-  fn print<T: TableRow + 'static>(
+  fn print<T: Row + 'static>(
     &self,
     table_name: &str,
   ) -> Result<(), DatabaseError> {
@@ -137,16 +137,16 @@ struct Book {
   author_id: u32,
 }
 
-impl TableRow for Book {
+impl Row for Book {
   fn as_any(&self) -> &dyn Any {
     self
   }
 
-  fn header() -> Row {
+  fn header() -> PrettyRow {
     row!["ID", "Name", "Author ID"]
   }
 
-  fn to_pretty_row(&self) -> Row {
+  fn to_pretty_row(&self) -> PrettyRow {
     row![self.id, self.name, self.author_id]
   }
 }
@@ -157,16 +157,16 @@ struct Author {
   name: String,
 }
 
-impl TableRow for Author {
+impl Row for Author {
   fn as_any(&self) -> &dyn Any {
     self
   }
 
-  fn header() -> Row {
+  fn header() -> PrettyRow {
     row!["ID", "Name"]
   }
 
-  fn to_pretty_row(&self) -> Row {
+  fn to_pretty_row(&self) -> PrettyRow {
     row![self.id, self.name]
   }
 }
