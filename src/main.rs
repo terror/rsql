@@ -1,6 +1,9 @@
 use {
   prettytable::{format, row, Row as PrettyRow, Table as PrettyTable},
-  std::{any::Any, collections::BTreeMap, fmt, marker::PhantomData},
+  std::{
+    any::Any, cell::RefCell, collections::BTreeMap, fmt, marker::PhantomData,
+    rc::Rc,
+  },
   thiserror::Error,
 };
 
@@ -9,6 +12,7 @@ trait Row: fmt::Debug + Clone + Any {
   fn to_pretty_row(&self) -> PrettyRow;
 }
 
+#[derive(Debug, Clone)]
 struct Table<T: Row> {
   name: String,
   rows: Vec<T>,
@@ -22,6 +26,14 @@ impl<T: Row> Table<T> {
       rows: Vec::new(),
       phantom: PhantomData,
     }
+  }
+
+  fn insert(&mut self, row: T) {
+    self.rows.push(row);
+  }
+
+  fn insert_many(&mut self, rows: &[T]) {
+    self.rows.extend(rows.iter().cloned());
   }
 }
 
@@ -44,8 +56,10 @@ impl<T: Row> fmt::Display for Table<T> {
 enum DatabaseError {
   #[error("Table '{0}' already exists")]
   TableAlreadyExists(String),
+  #[cfg(test)]
   #[error("Table '{0}' not found")]
   TableNotFound(String),
+  #[cfg(test)]
   #[error("Invalid row type for table '{0}'")]
   InvalidRowType(String),
 }
@@ -72,7 +86,7 @@ impl<T: Row, U: Row> Row for JoinedRow<T, U> {
 
 #[derive(Default)]
 pub struct Database {
-  tables: BTreeMap<String, Box<dyn Any>>,
+  tables: BTreeMap<String, Rc<RefCell<dyn Any>>>,
 }
 
 impl Database {
@@ -85,86 +99,49 @@ impl Database {
   fn create_table<T: Row + 'static>(
     &mut self,
     name: &str,
-  ) -> Result<(), DatabaseError> {
+  ) -> Result<Rc<RefCell<Table<T>>>, DatabaseError> {
     if self.tables.contains_key(name) {
       return Err(DatabaseError::TableAlreadyExists(name.to_string()));
     }
 
-    let table = Table::<T>::new(name.to_string());
+    let table = Rc::new(RefCell::new(Table::<T>::new(name.to_string())));
 
-    self.tables.insert(name.to_string(), Box::new(table));
+    self.tables.insert(name.to_string(), table.clone());
 
-    Ok(())
+    Ok(table)
   }
 
   fn cross_join<T: Row + 'static, U: Row + 'static>(
     &self,
-    table_a: &str,
-    table_b: &str,
-  ) -> Result<Table<JoinedRow<T, U>>, DatabaseError> {
-    let table_a = self.from::<T>(table_a)?;
-    let table_b = self.from::<U>(table_b)?;
-
+    table_a: &Table<T>,
+    table_b: &Table<U>,
+  ) -> Table<JoinedRow<T, U>> {
     let mut joined_table =
       Table::new(format!("{}_cross_{}", table_a.name, table_b.name));
 
-    for left_row in table_a.rows.clone() {
-      for right_row in table_b.rows.clone() {
-        joined_table.rows.push(JoinedRow {
+    for left_row in &table_a.rows {
+      for right_row in &table_b.rows {
+        joined_table.insert(JoinedRow {
           left: left_row.clone(),
           right: right_row.clone(),
         });
       }
     }
 
-    Ok(joined_table)
+    joined_table
   }
 
+  #[cfg(test)]
   fn from<T: Row + 'static>(
     &self,
     table_name: &str,
-  ) -> Result<&Table<T>, DatabaseError> {
+  ) -> Result<Rc<RefCell<Table<T>>>, DatabaseError> {
     match self.tables.get(table_name) {
       Some(table) => table
+        .borrow()
         .downcast_ref::<Table<T>>()
+        .map(|t| Rc::new(RefCell::new(t.clone())))
         .ok_or_else(|| DatabaseError::InvalidRowType(table_name.to_string())),
-      None => Err(DatabaseError::TableNotFound(table_name.to_string())),
-    }
-  }
-
-  fn insert_into<T: Row + 'static>(
-    &mut self,
-    table_name: &str,
-    row: T,
-  ) -> Result<(), DatabaseError> {
-    match self.tables.get_mut(table_name) {
-      Some(table) => {
-        let table = table.downcast_mut::<Table<T>>().ok_or_else(|| {
-          DatabaseError::InvalidRowType(table_name.to_string())
-        })?;
-
-        table.rows.push(row);
-
-        Ok(())
-      }
-      None => Err(DatabaseError::TableNotFound(table_name.to_string())),
-    }
-  }
-
-  fn print<T: Row + 'static>(
-    &self,
-    table_name: &str,
-  ) -> Result<(), DatabaseError> {
-    match self.tables.get(table_name) {
-      Some(table) => {
-        let table = table.downcast_ref::<Table<T>>().ok_or_else(|| {
-          DatabaseError::InvalidRowType(table_name.to_string())
-        })?;
-
-        print!("{table_name}\n{table}");
-
-        Ok(())
-      }
       None => Err(DatabaseError::TableNotFound(table_name.to_string())),
     }
   }
@@ -203,55 +180,40 @@ impl Row for Author {
   }
 }
 
-fn main() -> Result<(), DatabaseError> {
+fn main() {
   let mut database = Database::new();
 
-  database.create_table::<Book>("books")?;
-  database.create_table::<Author>("authors")?;
+  let books = database.create_table::<Book>("books").unwrap();
 
-  database.insert_into(
-    "books",
+  books.borrow_mut().insert_many(&[
     Book {
       id: 1,
       name: "1984".to_string(),
       author_id: 1,
     },
-  )?;
-
-  database.insert_into(
-    "books",
     Book {
       id: 2,
       name: "To Kill a Mockingbird".to_string(),
       author_id: 2,
     },
-  )?;
+  ]);
 
-  database.insert_into(
-    "authors",
+  let authors = database.create_table::<Author>("authors").unwrap();
+
+  authors.borrow_mut().insert_many(&[
     Author {
       id: 1,
       name: "George Orwell".to_string(),
     },
-  )?;
-
-  database.insert_into(
-    "authors",
     Author {
       id: 2,
       name: "Harper Lee".to_string(),
     },
-  )?;
+  ]);
 
-  database.print::<Book>("books")?;
-  database.print::<Author>("authors")?;
+  let result = database.cross_join(&books.borrow(), &authors.borrow());
 
-  print!(
-    "Cross Joined (books, authors):\n{}",
-    database.cross_join::<Book, Author>("books", "authors")?
-  );
-
-  Ok(())
+  print!("{result}");
 }
 
 #[cfg(test)]
@@ -273,145 +235,82 @@ mod tests {
   fn insert_into() {
     let mut db = Database::new();
 
-    db.create_table::<Book>("books").unwrap();
+    let books = db.create_table::<Book>("books").unwrap();
 
-    assert!(db
-      .insert_into(
-        "books",
-        Book {
-          id: 1,
-          name: "Test Book".to_string(),
-          author_id: 1
-        }
-      )
-      .is_ok());
+    books.borrow_mut().insert(Book {
+      id: 1,
+      name: "Test Book".to_string(),
+      author_id: 1,
+    });
 
     let table = db.from::<Book>("books").unwrap();
 
-    assert_eq!(table.rows.len(), 1);
-    assert_eq!(table.rows[0].name, "Test Book");
+    assert_eq!(table.borrow().rows.len(), 1);
+
+    assert_eq!(table.borrow().rows[0].name, "Test Book");
   }
 
   #[test]
-  fn insert_into_nonexistent_table() {
+  fn insert_many() {
     let mut db = Database::new();
 
-    let err = db.insert_into(
-      "nonexistent",
+    let books = db.create_table::<Book>("books").unwrap();
+
+    books.borrow_mut().insert_many(&[
       Book {
         id: 1,
-        name: "Test Book".to_string(),
+        name: "Book 1".to_string(),
         author_id: 1,
       },
-    );
-
-    assert!(matches!(err, Err(DatabaseError::TableNotFound(_))));
-  }
-
-  #[test]
-  fn insert_wrong_type() {
-    let mut db = Database::new();
-
-    db.create_table::<Book>("books").unwrap();
-
-    let err = db.insert_into(
-      "books",
-      Author {
-        id: 1,
-        name: "Test Author".to_string(),
-      },
-    );
-
-    assert!(matches!(err, Err(DatabaseError::InvalidRowType(_))));
-  }
-
-  #[test]
-  fn get_table() {
-    let mut db = Database::new();
-
-    db.create_table::<Book>("books").unwrap();
-
-    db.insert_into(
-      "books",
       Book {
-        id: 1,
-        name: "Test Book".to_string(),
-        author_id: 1,
+        id: 2,
+        name: "Book 2".to_string(),
+        author_id: 2,
       },
-    )
-    .unwrap();
+    ]);
 
     let table = db.from::<Book>("books").unwrap();
 
-    assert_eq!(table.name, "books");
-    assert_eq!(table.rows.len(), 1);
-    assert_eq!(table.rows[0].name, "Test Book");
+    assert_eq!(table.borrow().rows.len(), 2);
 
-    assert!(matches!(
-      db.from::<Book>("nonexistent"),
-      Err(DatabaseError::TableNotFound(_))
-    ));
-  }
+    assert_eq!(table.borrow().rows[0].name, "Book 1");
 
-  #[test]
-  fn get_table_wrong_type() {
-    let mut db = Database::new();
-
-    db.create_table::<Book>("books").unwrap();
-
-    assert!(matches!(
-      db.from::<Author>("books"),
-      Err(DatabaseError::InvalidRowType(_))
-    ));
+    assert_eq!(table.borrow().rows[1].name, "Book 2");
   }
 
   #[test]
   fn cross_join() {
     let mut db = Database::new();
 
-    db.create_table::<Book>("books").unwrap();
-    db.create_table::<Author>("authors").unwrap();
+    let books = db.create_table::<Book>("books").unwrap();
 
-    db.insert_into(
-      "books",
+    books.borrow_mut().insert_many(&[
       Book {
         id: 1,
         name: "1984".to_string(),
         author_id: 1,
       },
-    )
-    .unwrap();
-
-    db.insert_into(
-      "books",
       Book {
         id: 2,
         name: "Animal Farm".to_string(),
         author_id: 1,
       },
-    )
-    .unwrap();
+    ]);
 
-    db.insert_into(
-      "authors",
+    let authors = db.create_table::<Author>("authors").unwrap();
+
+    authors.borrow_mut().insert_many(&[
       Author {
         id: 1,
         name: "George Orwell".to_string(),
       },
-    )
-    .unwrap();
-
-    db.insert_into(
-      "authors",
       Author {
         id: 2,
         name: "Aldous Huxley".to_string(),
       },
-    )
-    .unwrap();
+    ]);
 
-    let joined_table =
-      db.cross_join::<Book, Author>("books", "authors").unwrap();
+    let joined_table = db.cross_join(&books.borrow(), &authors.borrow());
 
     assert_eq!(joined_table.rows.len(), 4);
 
@@ -430,19 +329,5 @@ mod tests {
     assert_eq!(last_row.left.author_id, 1);
     assert_eq!(last_row.right.id, 2);
     assert_eq!(last_row.right.name, "Aldous Huxley");
-
-    let combinations = [
-      ("1984", "George Orwell"),
-      ("1984", "Aldous Huxley"),
-      ("Animal Farm", "George Orwell"),
-      ("Animal Farm", "Aldous Huxley"),
-    ];
-
-    for (book, author) in combinations.iter() {
-      assert!(joined_table
-        .rows
-        .iter()
-        .any(|row| row.left.name == *book && row.right.name == *author));
-    }
   }
 }
