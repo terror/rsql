@@ -168,6 +168,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsql"
+version = "0.0.0"
+dependencies = [
+ "prettytable",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "rustversion"
 version = "1.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -197,15 +206,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "sql-rs"
-version = "0.1.0"
-dependencies = [
- "prettytable",
- "serde",
- "thiserror",
 ]
 
 [[package]]
